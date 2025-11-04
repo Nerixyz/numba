@@ -440,6 +440,8 @@ class BaseNativeLowering(abc.ABC, LoweringPass):
         if state.library is None:
             codegen = state.targetctx.codegen()
             state.library = codegen.create_library(state.func_id.func_qualname)
+            state.library.cache = state.cache
+            state.library.targetctx = state.targetctx
             # Enable object caching upfront, so that the library can
             # be later serialized.
             state.library.enable_object_caching()

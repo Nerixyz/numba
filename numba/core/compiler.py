@@ -388,14 +388,25 @@ class CompilerBase(object):
     Stores and manages states for the compiler
     """
 
-    def __init__(self, typingctx, targetctx, library, args, return_type, flags,
-                 locals):
+    def __init__(
+        self,
+        typingctx,
+        targetctx,
+        library,
+        args,
+        return_type,
+        flags,
+        locals,
+        cache=None,
+    ):
         # Make sure the environment is reloaded
         config.reload_config()
         typingctx.refresh()
         targetctx.refresh()
 
         self.state = StateDict()
+        print("cache =", cache)
+        self.state.cache = cache
 
         self.state.typingctx = typingctx
         self.state.targetctx = _make_subtarget(targetctx, flags)
@@ -463,7 +474,7 @@ class CompilerBase(object):
                 pipeline_name = pm.pipeline_name
                 func_name = "%s.%s" % (self.state.func_id.modname,
                                        self.state.func_id.func_qualname)
-
+                print(pipeline_name)
                 event("Pipeline: %s for %s" % (pipeline_name, func_name))
                 self.state.metadata['pipeline_times'] = {pipeline_name:
                                                          pm.exec_times}
@@ -710,8 +721,18 @@ class DefaultPassBuilder(object):
         return pm
 
 
-def compile_extra(typingctx, targetctx, func, args, return_type, flags,
-                  locals, library=None, pipeline_class=Compiler):
+def compile_extra(
+    typingctx,
+    targetctx,
+    func,
+    args,
+    return_type,
+    flags,
+    locals,
+    library=None,
+    pipeline_class=Compiler,
+    cache=None,
+):
     """Compiler entry point
 
     Parameter
@@ -734,9 +755,14 @@ def compile_extra(typingctx, targetctx, func, args, return_type, flags,
     pipeline_class : type like numba.compiler.CompilerBase
         compiler pipeline
     """
-    pipeline = pipeline_class(typingctx, targetctx, library,
-                              args, return_type, flags, locals)
-    return pipeline.compile_extra(func)
+    print("cache2=", cache)
+    pipeline = pipeline_class(
+        typingctx, targetctx, library, args, return_type, flags, locals, cache=cache
+    )
+    res = pipeline.compile_extra(func)
+    if pipeline.state.library and hasattr(pipeline.state.library, "hash"):
+        pipeline.state.cache.save_irhash(pipeline.state.library.hash, res)
+    return res
 
 
 def compile_ir(typingctx, targetctx, func_ir, args, return_type, flags,

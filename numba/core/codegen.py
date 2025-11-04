@@ -5,7 +5,9 @@ import weakref
 import ctypes
 import html
 import textwrap
+import xxhash
 
+import traceback
 import llvmlite.binding as ll
 import llvmlite.ir as llvmir
 
@@ -15,7 +17,7 @@ from numba.core.llvm_bindings import create_pass_builder
 from numba.core.runtime.nrtopt import remove_redundant_nrt_refct
 from numba.core.runtime import rtsys
 from numba.core.compiler_lock import require_global_compiler_lock
-from numba.core.errors import NumbaInvalidConfigWarning
+from numba.core.errors import NumbaInvalidConfigWarning, IrhashResult
 from numba.misc.inspection import disassemble_elf_to_cfg
 from numba.misc.llvm_pass_timings import PassTimingsCollection
 
@@ -642,7 +644,8 @@ class CPUCodeLibrary(CodeLibrary):
 
     def __init__(self, codegen, name):
         super().__init__(codegen, name)
-        self._linking_libraries = []   # maintain insertion order
+        self._linking_libraries = []  # maintain insertion order
+        self.delayed_modules = []
         self._final_module = ll.parse_assembly(
             str(self._codegen._create_empty_module(self.name)))
         self._final_module.name = cgutils.normalize_ir_text(self.name)
@@ -728,13 +731,14 @@ class CPUCodeLibrary(CodeLibrary):
         self._linking_libraries.append(library)
 
     def add_ir_module(self, ir_module):
+        print("add_ir_module")
         self._raise_if_finalized()
         assert isinstance(ir_module, llvmir.Module)
         ir = cgutils.normalize_ir_text(str(ir_module))
         ll_module = ll.parse_assembly(ir)
         ll_module.name = ir_module.name
+        self.delayed_modules.append(ll_module)
         ll_module.verify()
-        self.add_llvm_module(ll_module)
 
     def add_llvm_module(self, ll_module):
         self._optimize_functions(ll_module)
@@ -744,6 +748,23 @@ class CPUCodeLibrary(CodeLibrary):
         self._final_module.link_in(ll_module)
 
     def finalize(self):
+        print("final")
+        # traceback.print_stack()
+        if hasattr(self, "cache"):
+            x = xxhash.xxh128()
+            for ll_module in self.delayed_modules:
+                h = ll_module.irhash()
+                # print("=========================================")
+                # print(h)
+                # print(ll_module)
+                x.update(h)
+            fin = x.digest().hex()
+            data = self.cache.load_irhash(fin, self.targetctx)
+            self.hash = fin
+            if data is not None:
+                raise IrhashResult(data)
+        for ll_module in self.delayed_modules:
+            self.add_llvm_module(ll_module)
         require_global_compiler_lock()
 
         # Report any LLVM-related problems to the user

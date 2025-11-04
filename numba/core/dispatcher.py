@@ -41,14 +41,16 @@ class OmittedArg(object):
 
 
 class _FunctionCompiler(object):
-    def __init__(self, py_func, targetdescr, targetoptions, locals,
-                 pipeline_class):
+    def __init__(
+        self, py_func, targetdescr, targetoptions, locals, pipeline_class, cache=None
+    ):
         self.py_func = py_func
         self.targetdescr = targetdescr
         self.targetoptions = targetoptions
         self.locals = locals
         self.pysig = utils.pysignature(self.py_func)
         self.pipeline_class = pipeline_class
+        self.cache = cache
         # Remember key=(args, return_type) combinations that will fail
         # compilation to avoid compilation attempt on them.  The values are
         # the exceptions.
@@ -76,7 +78,9 @@ class _FunctionCompiler(object):
                               stararg_handler)
         return self.pysig, args
 
-    def compile(self, args, return_type):
+    def compile(self, args, return_type, cache=None):
+        if self.cache is None:
+            self.cache = cache
         status, retval = self._compile_cached(args, return_type)
         if status:
             return retval
@@ -104,12 +108,18 @@ class _FunctionCompiler(object):
         flags = self._customize_flags(flags)
 
         impl = self._get_implementation(args, {})
-        cres = compiler.compile_extra(self.targetdescr.typing_context,
-                                      self.targetdescr.target_context,
-                                      impl,
-                                      args=args, return_type=return_type,
-                                      flags=flags, locals=self.locals,
-                                      pipeline_class=self.pipeline_class)
+        print("cache3=", self.cache)
+        cres = compiler.compile_extra(
+            self.targetdescr.typing_context,
+            self.targetdescr.target_context,
+            impl,
+            args=args,
+            return_type=return_type,
+            flags=flags,
+            locals=self.locals,
+            pipeline_class=self.pipeline_class,
+            cache=self.cache,
+        )
         # Check typing error if object mode is used
         if cres.typing_error is not None and not flags.enable_pyobject:
             raise cres.typing_error
@@ -905,12 +915,23 @@ class Dispatcher(serialize.ReduceMixin, _MemoMixin, _DispatcherBase):
                 )
                 with ev.trigger_event("numba:compile", data=ev_details):
                     try:
-                        cres = self._compiler.compile(args, return_type)
+                        cres = self._compiler.compile(
+                            args, return_type, cache=self._cache
+                        )
                     except errors.ForceLiteralArg as e:
+
                         def folded(args, kws):
-                            return self._compiler.fold_argument_types(args,
-                                                                      kws)[1]
+                            return self._compiler.fold_argument_types(args, kws)[1]
+
                         raise e.bind_fold_arguments(folded)
+                    except errors.IrhashResult as r:
+                        cres = r.cres
+                        if not cres.objectmode:
+                            self.targetctx.insert_user_function(
+                                cres.entry_point, cres.fndesc, [cres.library]
+                            )
+                        self.add_overload(cres)
+                        return cres.entry_point
                     self.add_overload(cres)
                 self._cache.save_overload(sig, cres)
                 return cres.entry_point

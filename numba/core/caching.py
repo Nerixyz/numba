@@ -17,6 +17,7 @@ import sys
 import tempfile
 import uuid
 import warnings
+import traceback
 
 from numba.misc.appdirs import AppDirs
 import zipfile
@@ -61,6 +62,14 @@ class _Cache(metaclass=ABCMeta):
         """
 
     @abstractmethod
+    def load_irhash(self, hash, target_context):
+        pass
+
+    @abstractmethod
+    def save_irhash(self, hash, data):
+        pass
+
+    @abstractmethod
     def enable(self):
         """
         Enable the cache.
@@ -85,6 +94,12 @@ class NullCache(_Cache):
         return None
 
     def load_overload(self, sig, target_context):
+        pass
+
+    def load_irhash(self, hash, target_context):
+        pass
+
+    def save_irhash(self, hash, data):
         pass
 
     def save_overload(self, sig, cres):
@@ -587,6 +602,8 @@ class IndexDataCacheFile(object):
             with open(self._index_path, "rb") as f:
                 version = pickle.load(f)
                 data = f.read()
+                print(f"IndexDataCacheFile._load_index: version={version}")
+                # traceback.print_stack()
         except FileNotFoundError:
             # Index doesn't exist yet?
             return {}
@@ -722,6 +739,7 @@ class Cache(_Cache):
         # None returned if the `with` block swallows an exception
 
     def _load_overload(self, sig, target_context):
+        return
         if not self._enabled:
             return
         key = self._index_key(sig, target_context.codegen())
@@ -729,6 +747,18 @@ class Cache(_Cache):
         if data is not None:
             data = self._impl.rebuild(target_context, data)
         return data
+
+    def load_irhash(self, hash: str, target_context):
+        if not self._enabled:
+            return
+        print(f"Load IRHash: {hash}")
+        try:
+            data = self._cache_file._load_data(hash)
+            if data is not None:
+                data = self._impl.rebuild(target_context, data)
+            return data
+        except OSError:
+            return
 
     def save_overload(self, sig, data):
         """
@@ -746,6 +776,15 @@ class Cache(_Cache):
         key = self._index_key(sig, data.codegen)
         data = self._impl.reduce(data)
         self._cache_file.save(key, data)
+
+    def save_irhash(self, hash, data):
+        if not self._enabled:
+            return
+        if not self._impl.check_cachable(data):
+            return
+        print(f"Save IRHash: {hash}")
+        data = self._impl.reduce(data)
+        self._cache_file._save_data(hash, data)
 
     @contextlib.contextmanager
     def _guard_against_spurious_io_errors(self):
