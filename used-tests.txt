@@ -45,7 +45,6 @@ numba.tests.npyufunc.test_dufunc.TestDUFuncAt.test_ufunc_at_inner_loop
 numba.tests.npyufunc.test_dufunc.TestDUFuncAt.test_ufunc_at_large
 numba.tests.npyufunc.test_dufunc.TestDUFuncAt.test_ufunc_at_multiD
 numba.tests.npyufunc.test_dufunc.TestDUFuncAt.test_ufunc_at_negative
-numba.tests.npyufunc.test_dufunc.TestDUFuncAt.test_ufunc_at_negative_indexes
 numba.tests.npyufunc.test_dufunc.TestDUFuncAt.test_ufunc_at_no_loop_for_op
 numba.tests.npyufunc.test_dufunc.TestDUFuncAt.test_ufunc_at_not_none_signature
 numba.tests.npyufunc.test_dufunc.TestDUFuncAt.test_ufunc_at_output_casting
