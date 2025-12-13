@@ -354,6 +354,7 @@ def _fix_invalid_lineno_ranges(astree: ast.AST):
 def _lower_array_expr(lowerer, expr):
     '''Lower an array expression built by RewriteArrayExprs.
     '''
+    # print(type(expr))
     expr_name = "__numba_array_expr_%s" % (hex(hash(expr)).replace("-", "_"))
     expr_filename = expr.loc.filename
     expr_var_list = expr.list_vars()

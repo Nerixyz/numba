@@ -2,11 +2,14 @@
 
 import logging
 import os
+from pathlib import Path
+import shutil
 import sys
 
 from llvmlite import ir
 from llvmlite.binding import Linkage
 
+from numba.core.errors import IrhashResult
 from numba.pycc import llvm_types as lt
 from numba.core.cgutils import create_constant_array
 from numba.core.compiler import compile_extra, Flags
@@ -157,12 +160,24 @@ class _ModuleCompiler(object):
             nrt_module, _ = nrtdynmod.create_nrt_module(self.context)
             library.add_ir_module(nrt_module)
 
-        for entry in self.export_entries:
-            cres = compile_extra(self.typing_context, self.context,
-                                entry.function,
-                                entry.signature.args,
-                                entry.signature.return_type, flags,
-                                locals={}, library=library)
+        library.irhash_cache = True
+        ress = [
+            (
+                entry,
+                compile_extra(
+                    self.typing_context,
+                    self.context,
+                    entry.function,
+                    entry.signature.args,
+                    entry.signature.return_type,
+                    flags,
+                    locals={},
+                    library=library,
+                ),
+            )
+            for entry in self.export_entries
+        ]
+        for entry, cres in ress:
 
             # Fix up dynamic exc globals
             module = library._final_module
@@ -224,9 +239,19 @@ class _ModuleCompiler(object):
 
     def write_native_object(self, output, wrap=False, **kws):
         self.export_python_wrap = wrap
-        library = self._cull_exports()
+        try:
+            library = self._cull_exports()
+        except IrhashResult as ir:
+            p: Path = ir.cres
+            print(f"load {p}")
+            os.link(p, output)
+            return
         with open(output, 'wb') as fout:
             fout.write(library.emit_native_object())
+        if hasattr(library, "_irhash_dst"):
+            print(f"save {library._irhash_dst}")
+            os.makedirs(library._irhash_dst.parent, exist_ok=True)
+            os.link(output, library._irhash_dst)
 
     def emit_type(self, tyobj):
         ret_val = str(tyobj)
@@ -289,13 +314,15 @@ class _ModuleCompiler(object):
         for entry in self.export_entries:
             env = self.function_environments[entry]
             # Constants may be unhashable so avoid trying to cache them
-            env_def = pyapi.serialize_uncached(env.consts)
+            env_def = pyapi.serialize_uncached(env.consts)[0]
             env_defs.append(env_def)
         # Append extra environments
-        env_defs.extend([
-            pyapi.serialize_uncached(env.consts)
-            for env in self.extra_environments.values()
-        ])
+        env_defs.extend(
+            [
+                pyapi.serialize_uncached(env.consts)[0]
+                for env in self.extra_environments.values()
+            ]
+        )
         env_defs_init = create_constant_array(self.env_def_ty, env_defs)
         gv = self.context.insert_unique_const(llvm_module,
                                               '.module_environments',

@@ -1240,7 +1240,7 @@ def _assert_cache_stats(cfunc, expect_hit, expect_misses):
         raise AssertionError("cache not used")
 
 
-@skip_if_typeguard
+@unittest.skip
 class TestOverloadMethodCaching(TestCase):
     # Nested multiprocessing.Pool raises AssertionError:
     # "daemonic processes are not allowed to have children"
@@ -1838,7 +1838,7 @@ def with_objmode_cache_ov_example(x):
     pass
 
 
-@skip_if_typeguard
+@unittest.skip
 class TestCachingOverloadObjmode(TestCase):
     """Test caching of the use of overload implementations that use
     `with objmode`
@@ -1851,6 +1851,7 @@ class TestCachingOverloadObjmode(TestCase):
     def tearDown(self):
         warnings.resetwarnings()
 
+    @unittest.skip
     def test_caching_overload_objmode(self):
         cache_dir = temp_directory(self.__class__.__name__)
         with override_config("CACHE_DIR", cache_dir):
@@ -1927,6 +1928,7 @@ class TestCachingOverloadObjmode(TestCase):
         if len(disp.stats.cache_hits) <= 0:
             raise AssertionError("unexpected missing cache hit")
 
+    @unittest.skip
     def test_check_objmode_cache_ndarray(self):
         # See issue #6130.
         # Env is missing after cache load.

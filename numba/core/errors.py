@@ -873,3 +873,10 @@ def new_error_context(fmt_, *args, **kwargs):
 __all__ += [name for (name, value) in globals().items()
             if not name.startswith('_') and isinstance(value, type)
             and issubclass(value, (Exception, Warning))]
+
+class IrhashResult(BaseException):
+    def __init__(self, cres):
+        self.cres = cres
+
+
+__all__ += ["IrhashResult"]

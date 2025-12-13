@@ -37,11 +37,21 @@ class ObjectModeFrontEnd(FunctionPass):
                 for loop in loops:
                     print("Lifting loop", loop.get_source_location())
             from numba.core.compiler import compile_ir
-            cres = compile_ir(state.typingctx, state.targetctx, main,
-                              state.args, state.return_type,
-                              outer_flags, state.locals,
-                              lifted=tuple(loops), lifted_from=None,
-                              is_lifted_loop=True)
+
+            cres = compile_ir(
+                state.typingctx,
+                state.targetctx,
+                main,
+                state.args,
+                state.return_type,
+                outer_flags,
+                state.locals,
+                lifted=tuple(loops),
+                lifted_from=None,
+                is_lifted_loop=True,
+                cache=state.cache,
+                parent_state=state,
+            )
             return cres
 
     def run_pass(self, state):
@@ -97,6 +107,11 @@ class ObjectModeBackEnd(LoweringPass):
         if state.library is None:
             codegen = state.targetctx.codegen()
             state.library = codegen.create_library(state.func_id.func_qualname)
+            state.library.cache = state.cache
+            state.library.req_sig = state.req_sig
+            state.library._args = state.args
+            state.library._return_type = state.return_type
+            state.library.targetctx = state.targetctx
             # Enable object caching upfront, so that the library can
             # be later serialized.
             state.library.enable_object_caching()

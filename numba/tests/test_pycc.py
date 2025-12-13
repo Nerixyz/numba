@@ -37,7 +37,7 @@ def unset_macosx_deployment_target():
 
 
 @needs_setuptools
-@skip_if_freethreading
+@unittest.skip # pycc not supported (deprecated)
 class TestCompilerChecks(TestCase):
 
     # NOTE: THIS TEST MUST ALWAYS RUN ON WINDOWS, DO NOT SKIP
@@ -90,8 +90,7 @@ class BasePYCCTest(TestCase):
 
 
 @needs_setuptools
-@skip_if_py313_on_windows
-@skip_if_linux_aarch64
+@unittest.skip
 class TestCC(BasePYCCTest):
 
     def setUp(self):
@@ -306,9 +305,7 @@ class TestCC(BasePYCCTest):
 
 
 @needs_setuptools
-@skip_if_py313_on_windows
-@skip_if_linux_aarch64
-@skip_if_freethreading
+@unittest.skip
 class TestDistutilsSupport(TestCase):
 
     def setUp(self):

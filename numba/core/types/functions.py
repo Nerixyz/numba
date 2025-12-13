@@ -114,6 +114,7 @@ class _ResolutionFailures(object):
                                           fname=fname,
                                           signature=argstr,
                                           ncandidates=ncandidates)]
+        msgbuf.append(f"signature={argstr}")
         nolitargs = tuple([unliteral(a) for a in self._args])
         nolitkwargs = {k: unliteral(v) for k, v in self._kwargs.items()}
         nolitargstr = argsnkwargs_to_str(nolitargs, nolitkwargs)
@@ -257,6 +258,17 @@ class BaseFunction(Callable):
         else:
             self.templates = (template,)
             self.typing_key = template.key
+        # if (
+        #     len(self.templates) == 2
+        #     and repr(self.templates[0])
+        #     == "<class 'numba.core.typing.templates.Registry.register_global.<locals>.decorate.<locals>.Template'>"
+        # ):
+        #     self.templates = (
+        #         "<class 'numba.core.typing.templates.Template'>",
+        #         self.templates[1],
+        #     )
+        #     # print(repr(self.templates[0]))
+        #     print("ALARM!!!!")
         self._impl_keys = {}
         name = "%s(%s)" % (self.__class__.__name__, self.typing_key)
         self._depth = 0
@@ -329,6 +341,7 @@ class BaseFunction(Callable):
                             msg = 'No match.'
                         failures.add_error(temp, True, msg, uselit)
 
+        # print(f"==== target_hw={target_hw}, order={order}, args={args}, kws={kws}")
         failures.raise_error()
 
     def get_call_signatures(self):
@@ -522,6 +535,7 @@ class Dispatcher(WeakType, Callable, Dummy):
     """
 
     def __init__(self, dispatcher):
+        # print("dispatch", hex(id(dispatcher)))
         self._store_object(dispatcher)
         super(Dispatcher, self).__init__("type(%s)" % dispatcher)
 
@@ -543,6 +557,8 @@ class Dispatcher(WeakType, Callable, Dummy):
         if sig:
             sig = sig.replace(pysig=pysig)
             return sig
+        # else:
+        #     print("cases", template(context).cases, f"args={args}, kws={kws}")
 
     def get_call_signatures(self):
         sigs = self.dispatcher.nopython_signatures

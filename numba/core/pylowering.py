@@ -164,6 +164,7 @@ class PyLower(BaseLower):
             self.builder.branch(target)
 
         elif isinstance(inst, ir.Del):
+            # print("del", inst.value)
             self.delvar(inst.value)
 
         elif isinstance(inst, ir.PopBlock):
@@ -631,7 +632,7 @@ class PyLower(BaseLower):
         """
         Cleanup live variables.
         """
-        for name in self._live_vars:
+        for name in sorted(self._live_vars):
             ptr = self._getvar(name)
             self.decref(self.builder.load(ptr))
 

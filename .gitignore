@@ -13,6 +13,7 @@
 tags
 MANIFEST
 
+/*.txt
 build/
 docs/_build/
 docs/gh-pages/
@@ -24,5 +25,7 @@ htmlcov/
 .mypy_cache/
 .ipynb_checkpoints/
 __pycache__/
+!used-tests.txt
+!all-tests.txt
 
 docs/source/developer/autogen*

@@ -28,6 +28,7 @@ class BaseLower(object):
     """
 
     def __init__(self, context, library, fndesc, func_ir, metadata=None):
+        # print(func_ir.dump())
         self.library = library
         self.fndesc = fndesc
         self.blocks = utils.SortedMap(func_ir.blocks.items())

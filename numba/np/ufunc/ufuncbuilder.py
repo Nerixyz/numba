@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 
 import inspect
+import os
 import warnings
 from contextlib import contextmanager
 
-from numba.core import config, targetconfig
+from numba.core import config, targetconfig, errors
 from numba.core.decorators import jit
 from numba.core.descriptors import TargetDescriptor
 from numba.core.extending import is_jitted
@@ -17,7 +18,7 @@ from numba.np.numpy_support import as_dtype
 from numba.np.ufunc import _internal
 from numba.np.ufunc.sigparse import parse_signature
 from numba.np.ufunc.wrappers import build_ufunc_wrapper, build_gufunc_wrapper
-from numba.core.caching import FunctionCache, NullCache
+from numba.core.caching import FunctionCache, NullCache, IrhashCache
 from numba.core.compiler_lock import global_compiler_lock
 
 
@@ -105,7 +106,10 @@ class UFuncDispatcher(serialize.ReduceMixin):
         return cls(py_func=pyfunc, locals=locals, targetoptions=targetoptions)
 
     def enable_caching(self):
-        self.cache = FunctionCache(self.py_func)
+        if os.environ["IRTEST_MODE"] == "irhash":
+            self.cache = IrhashCache()
+        else:
+            self.cache = FunctionCache(self.py_func)
 
     def compile(self, sig, locals=None, **targetoptions):
         if locals is None:
@@ -159,10 +163,19 @@ class UFuncDispatcher(serialize.ReduceMixin):
 
                     # Compile
                     args, return_type = sigutils.normalize_signature(sig)
-                    cres = compiler.compile_extra(typingctx, targetctx,
-                                                  self.py_func, args=args,
-                                                  return_type=return_type,
-                                                  flags=flags, locals=locals)
+                    try:
+                        cres = compiler.compile_extra(
+                            typingctx,
+                            targetctx,
+                            self.py_func,
+                            args=args,
+                            return_type=return_type,
+                            flags=flags,
+                            locals=locals,
+                            cache=self.cache,
+                        )
+                    except errors.IrhashResult as r:
+                        cres = r.cres
 
                     # cache lookup failed before so safe to save
                     self.cache.save_overload(sig, cres)

@@ -109,7 +109,7 @@ class JitClassType(type):
         glbls = {"__numba_cls_": cls}
         exec(ctor_source, glbls)
         ctor = glbls['ctor']
-        cls._ctor = njit(ctor)
+        cls._ctor = njit(ctor, cache=False)
 
     def __instancecheck__(cls, instance):
         if isinstance(instance, _box.Box):

@@ -346,6 +346,7 @@ class PassManager(object):
         from numba.core.compiler import _EarlyPipelineCompletion
         if not self.finalized:
             raise RuntimeError("Cannot run non-finalised pipeline")
+        # print("piplc", state.cache)
 
         # walk the passes and run them
         for idx, (pss, pass_desc) in enumerate(self.passes):

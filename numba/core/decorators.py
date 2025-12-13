@@ -3,7 +3,9 @@ Define @jit and related decorators.
 """
 
 
+import os
 import sys
+import time
 import warnings
 import inspect
 import logging
@@ -11,7 +13,7 @@ from types import MappingProxyType
 
 from numba.core.errors import DeprecationError, NumbaDeprecationWarning
 from numba.stencils.stencil import stencil
-from numba.core import config, extending, sigutils, registry
+from numba.core import config, extending, sigutils, registry, errors, utils
 
 _logger = logging.getLogger(__name__)
 
@@ -23,9 +25,16 @@ _msg_deprecated_signature_arg = ("Deprecated keyword argument `{0}`. "
                                  "Signatures should be passed as the first "
                                  "positional argument.")
 
+_should_cache = os.environ["IRTEST_MODE"] != "numba-nocache"
 
-def jit(signature_or_function=None, locals=MappingProxyType({}), cache=False,
-        pipeline_class=None, boundscheck=None, **options):
+def jit(
+    signature_or_function=None,
+    locals=MappingProxyType({}),
+    cache=_should_cache,
+    pipeline_class=None,
+    boundscheck=None,
+    **options,
+):
     """
     This decorator is used to compile a Python function into native code.
 
@@ -229,7 +238,11 @@ def _jit(sigs, locals, target, cache, targetoptions, **dispatcher_args):
             # Register the Dispatcher to the type inference mechanism,
             # even though the decorator hasn't returned yet.
             from numba.core import typeinfer
-            with typeinfer.register_dispatcher(disp):
+
+            with (
+                typeinfer.register_dispatcher(disp),
+                utils.MyCompileLogger() as _cl,
+            ):
                 for sig in sigs:
                     disp.compile(sig)
                 disp.disable_compile()

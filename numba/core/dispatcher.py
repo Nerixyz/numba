@@ -3,7 +3,10 @@
 
 import collections
 import functools
+import os
 import sys
+import time
+import traceback
 import types as pytypes
 import uuid
 import weakref
@@ -19,7 +22,7 @@ from numba.core.typeconv.rules import default_type_manager
 from numba.core.typing.templates import fold_arguments
 from numba.core.typing.typeof import Purpose, typeof
 from numba.core.bytecode import get_code_object
-from numba.core.caching import NullCache, FunctionCache
+from numba.core.caching import NullCache, FunctionCache, IrhashCache
 from numba.core import entrypoints
 import numba.core.event as ev
 
@@ -41,14 +44,16 @@ class OmittedArg(object):
 
 
 class _FunctionCompiler(object):
-    def __init__(self, py_func, targetdescr, targetoptions, locals,
-                 pipeline_class):
+    def __init__(
+        self, py_func, targetdescr, targetoptions, locals, pipeline_class, cache=None
+    ):
         self.py_func = py_func
         self.targetdescr = targetdescr
         self.targetoptions = targetoptions
         self.locals = locals
         self.pysig = utils.pysignature(self.py_func)
         self.pipeline_class = pipeline_class
+        self.cache = cache
         # Remember key=(args, return_type) combinations that will fail
         # compilation to avoid compilation attempt on them.  The values are
         # the exceptions.
@@ -69,21 +74,26 @@ class _FunctionCompiler(object):
 
         def stararg_handler(index, param, values):
             return types.StarArgTuple(values)
+
+        base_a = args
         # For now, we take argument values from the @jit function
         args = fold_arguments(self.pysig, args, kws,
                               normal_handler,
                               default_handler,
                               stararg_handler)
+        # print("FOLD", self.pysig, base_a, "->", args)
         return self.pysig, args
 
-    def compile(self, args, return_type):
-        status, retval = self._compile_cached(args, return_type)
+    def compile(self, args, return_type, cache=None, req_sig=None):
+        if self.cache is None:
+            self.cache = cache
+        status, retval = self._compile_cached(args, return_type, req_sig=req_sig)
         if status:
             return retval
         else:
             raise retval
 
-    def _compile_cached(self, args, return_type):
+    def _compile_cached(self, args, return_type, req_sig=None):
         key = tuple(args), return_type
         try:
             return False, self._failed_cache[key]
@@ -91,25 +101,32 @@ class _FunctionCompiler(object):
             pass
 
         try:
-            retval = self._compile_core(args, return_type)
+            retval = self._compile_core(args, return_type, req_sig=req_sig)
         except errors.TypingError as e:
             self._failed_cache[key] = e
             return False, e
         else:
             return True, retval
 
-    def _compile_core(self, args, return_type):
+    def _compile_core(self, args, return_type, req_sig=None):
         flags = compiler.Flags()
         self.targetdescr.options.parse_as_flags(flags, self.targetoptions)
         flags = self._customize_flags(flags)
 
         impl = self._get_implementation(args, {})
-        cres = compiler.compile_extra(self.targetdescr.typing_context,
-                                      self.targetdescr.target_context,
-                                      impl,
-                                      args=args, return_type=return_type,
-                                      flags=flags, locals=self.locals,
-                                      pipeline_class=self.pipeline_class)
+        # print("cache3=", self.cache)
+        cres = compiler.compile_extra(
+            self.targetdescr.typing_context,
+            self.targetdescr.target_context,
+            impl,
+            args=args,
+            return_type=return_type,
+            flags=flags,
+            locals=self.locals,
+            pipeline_class=self.pipeline_class,
+            cache=self.cache,
+            req_sig=req_sig,
+        )
         # Check typing error if object mode is used
         if cres.typing_error is not None and not flags.enable_pyobject:
             raise cres.typing_error
@@ -294,9 +311,12 @@ class _DispatcherBase(_dispatcher.Dispatcher):
 
     def add_overload(self, cres):
         args = tuple(cres.signature.args)
+        # if len(args) == 2 and isinstance(args[1].key, tuple) and len(args[1].key) == 2:
+        #     print("add", args[1].key)
         sig = [a._code for a in args]
         self._insert(sig, cres.entry_point, cres.objectmode)
         self.overloads[args] = cres
+        # XXX: HERE WE NEED TO LOAD THE ENV
 
     def fold_argument_types(self, args, kws):
         return self._compiler.fold_argument_types(args, kws)
@@ -373,7 +393,8 @@ class _DispatcherBase(_dispatcher.Dispatcher):
 
         return_val = None
         try:
-            return_val = self.compile(tuple(argtypes))
+            with utils.MyCompileLogger() as _cl:
+                return_val = self.compile(tuple(argtypes))
         except errors.ForceLiteralArg as e:
             # Received request for compiler re-entry with the list of arguments
             # indicated by e.requested_args.
@@ -768,6 +789,8 @@ class Dispatcher(serialize.ReduceMixin, _MemoMixin, _DispatcherBase):
         pipeline_class: type numba.compiler.CompilerBase
             The compiler pipeline type.
         """
+        # print("dispatcher base or", py_func)
+        # traceback.print_stack()
         if locals is None:
             locals = {}
         if targetoptions is None:
@@ -787,6 +810,7 @@ class Dispatcher(serialize.ReduceMixin, _MemoMixin, _DispatcherBase):
         self.targetoptions = targetoptions
         self.locals = locals
         self._cache = NullCache()
+        self._has_cache = False
         compiler_class = _FunctionCompiler
         self._compiler = compiler_class(py_func, self.targetdescr,
                                         targetoptions, locals, pipeline_class)
@@ -808,7 +832,11 @@ class Dispatcher(serialize.ReduceMixin, _MemoMixin, _DispatcherBase):
         return types.Dispatcher(self)
 
     def enable_caching(self):
-        self._cache = FunctionCache(self.py_func)
+        if os.environ["IRTEST_MODE"] == "irhash":
+            self._cache = IrhashCache()
+        else:
+            self._cache = FunctionCache(self.py_func)
+        self._has_cache = True
 
     def __get__(self, obj, objtype=None):
         '''Allow a JIT function to be bound as a method to an object'''
@@ -862,6 +890,8 @@ class Dispatcher(serialize.ReduceMixin, _MemoMixin, _DispatcherBase):
     def compile(self, sig):
         with ExitStack() as scope:
             cres = None
+            # print("compile")
+            # traceback.print_stack()
 
             def cb_compiler(dur):
                 if cres is not None:
@@ -886,6 +916,8 @@ class Dispatcher(serialize.ReduceMixin, _MemoMixin, _DispatcherBase):
                 if existing is not None:
                     return existing.entry_point
                 # Try to load from disk cache
+                # print("COMP=", self)
+                # print("SIG=", sig)
                 cres = self._cache.load_overload(sig, self.targetctx)
                 if cres is not None:
                     self._cache_hits[sig] += 1
@@ -905,14 +937,31 @@ class Dispatcher(serialize.ReduceMixin, _MemoMixin, _DispatcherBase):
                 )
                 with ev.trigger_event("numba:compile", data=ev_details):
                     try:
-                        cres = self._compiler.compile(args, return_type)
+                        # print("xccc")
+                        cres = self._compiler.compile(
+                            args, return_type, cache=self._cache, req_sig=sig
+                        )
+                        # print("2222", self._cache)
                     except errors.ForceLiteralArg as e:
+
                         def folded(args, kws):
-                            return self._compiler.fold_argument_types(args,
-                                                                      kws)[1]
+                            return self._compiler.fold_argument_types(args, kws)[1]
+
+                        # print("FORCE LITERAL!!")
                         raise e.bind_fold_arguments(folded)
+                    except errors.IrhashResult as r:
+                        cres = r.cres
+                        if not cres.objectmode:
+                            self.targetctx.insert_user_function(
+                                cres.entry_point, cres.fndesc, [cres.library]
+                            )
+                        self.add_overload(cres)
+                        # print("irhash")
+                        return cres.entry_point
                     self.add_overload(cres)
                 self._cache.save_overload(sig, cres)
+                # print(cres)
+                # print("end")
                 return cres.entry_point
 
     def get_compile_result(self, sig):
@@ -1168,6 +1217,13 @@ class LiftedLoop(LiftedCode):
                     # Check typing error if object mode is used
                     if (cres.typing_error is not None):
                         raise cres.typing_error
+                    for name, val in zip(
+                        cres.library.dynamic_import_names,
+                        cres.library.dynamic_import_values,
+                        strict=True,
+                    ):
+                        # print("compile ir", name, val)
+                        cres.library.codegen.set_ptr(name, val)
                     self.add_overload(cres)
                 return cres.entry_point
 
@@ -1185,7 +1241,7 @@ class LiftedWith(LiftedCode):
 
     def get_call_template(self, args, kws):
         """
-        Get a typing.ConcreteTemplate for this dispatcher and the given
+        Get a typing.ConcreteTemplate for this dispatcher and the givenf
         *args* and *kws* types.  This enables the resolving of the return type.
 
         A (template, pysig, args, kws) tuple is returned.

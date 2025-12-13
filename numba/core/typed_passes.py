@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from collections import defaultdict, namedtuple
 from functools import partial
 from copy import copy
+import traceback
 import warnings
 
 from numba.core import (errors, types, typing, ir, funcdesc, rewrites,
@@ -438,8 +439,16 @@ class BaseNativeLowering(abc.ABC, LoweringPass):
 
     def run_pass(self, state):
         if state.library is None:
+            # print("Make lib", state.cache)
+            # if state.cache is None:
+            #     traceback.print_stack()
             codegen = state.targetctx.codegen()
             state.library = codegen.create_library(state.func_id.func_qualname)
+            state.library.cache = state.cache
+            state.library.req_sig = state.req_sig
+            state.library._args = state.args
+            state.library._return_type = state.return_type
+            state.library.targetctx = state.targetctx
             # Enable object caching upfront, so that the library can
             # be later serialized.
             state.library.enable_object_caching()

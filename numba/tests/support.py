@@ -178,6 +178,7 @@ def expected_failure_np2(fn):
 
 _msg = "SciPy needed for test"
 skip_unless_scipy = unittest.skipIf(scipy is None, _msg)
+# skip_unless_scipy = unittest.skipIf(True, _msg)
 
 skip_unless_cffi = unittest.skipUnless(cffi_utils.SUPPORTED, 'requires cffi')
 

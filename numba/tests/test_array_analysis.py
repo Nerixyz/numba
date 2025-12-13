@@ -963,6 +963,7 @@ class TestArrayAnalysis(TestCase):
                                asserts=None)
 
 
+@skip_unless_scipy
 class TestArrayAnalysisParallelRequired(TestCase):
     """This is to just split out tests that need the parallel backend and
     therefore serialised execution.
@@ -1035,7 +1036,7 @@ class TestArrayAnalysisParallelRequired(TestCase):
         np.testing.assert_array_equal(
             njit(test_impl2, parallel=True)(A, a), test_impl2(A, a))
 
-    @skip_unsupported
+    @skip_unless_scipy
     def test_slice_dtype_issue_5056(self):
         # see issue 5056
 
@@ -1079,7 +1080,7 @@ class TestArrayAnalysisInterface(TestCase):
             with self.subTest(fname=k, sig=got):
                 self.assertEqual(got, expected)
 
-    @skip_unsupported
+    @unittest.skip  # no function IR when caching
     def test_array_analysis_extensions(self):
         # Test that the `array_analysis` object in `array_analysis_extensions`
         # can perform analysis on the scope using `equiv_sets`.

@@ -226,6 +226,7 @@ def fold_arguments(pysig, args, kws, normal_handler, default_handler,
         msg = (f"Cannot bind 'args={bind_args} kws={bind_kws}' to "
                f"signature '{pysig}' due to \"{type(e).__name__}: {e}\".")
         raise TypingError(msg)
+    # print(ba)
     for i, param in enumerate(pysig.parameters.values()):
         name = param.name
         default = param.default
@@ -697,7 +698,7 @@ class _OverloadFunctionTemplate(AbstractTemplate):
                                                 'iinfo': iinfo}
         else:
             sig = disp_type.get_call_type(self.context, new_args, kws)
-            if sig is None: # can't resolve for this target
+            if sig is None:  # can't resolve for this target
                 return None
             self._compiled_overloads[sig.args] = disp_type.get_overload(sig)
         return sig
@@ -1273,7 +1274,7 @@ class Registry(object):
             self.globals.append((val, typ))
         else:
             def decorate(cls, typing_key):
-                class Template(cls):
+                class Template(cls):  # foo
                     key = typing_key
                 if callable(val):
                     typ = types.Function(Template)

@@ -1086,6 +1086,21 @@ def _raw_memcpy(builder, func_name, dst, src, count, itemsize, align):
                           is_volatile])
 
 
+def _decl_trap(builder):
+    mod = builder.module
+    name = "llvm.debugtrap"
+    if name in mod.globals:
+        return mod.globals[name]
+
+    fnty = ir.types.FunctionType(ir.types.VoidType(), [])
+    return ir.Function(builder.module, fnty, name=name)
+
+
+def debugtrap(builder):
+    memcpy = _decl_trap(builder)
+    builder.call(memcpy, [])
+
+
 def raw_memcpy(builder, dst, src, count, itemsize, align=1):
     """
     Emit a raw memcpy() call for `count` items of size `itemsize`

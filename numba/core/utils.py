@@ -13,6 +13,7 @@ import warnings
 import threading
 import contextlib
 import json
+import time
 import typing as _tp
 from pprint import pformat
 
@@ -781,3 +782,37 @@ class _LazyJSONEncoder(json.JSONEncoder):
         if isinstance(obj, _lazy_pformat):
             return str(obj)
         return super().default(obj)
+
+
+class MyCompileLogger(object):
+    _ir_logfile = os.environ["IRTEST_LOG"]
+    _irmode = os.environ["IRTEST_MODE"]
+    _ir_phase = os.environ["IRTEST_PHASE"]
+
+    def __init__(self):
+        pass
+
+    def __enter__(self):
+        # only enable on the top level compilation
+        enabled = "X_IRTEST_WAS_CACHED" not in os.environ
+        self._enabled = enabled
+        if enabled:
+            os.environ["X_IRTEST_WAS_CACHED"] = "NA"
+            self._start = time.perf_counter()
+
+    def __exit__(self, *args, **kwargs):
+        if not self._enabled:
+            return
+        # print(os.environ["X_IRTEST_WAS_CACHED"])
+        with open(self._ir_logfile, "a+") as fd:
+            end = time.perf_counter()
+            dur = end - self._start
+            out = [
+                self._irmode,
+                self._ir_phase,
+                dur,
+                os.environ["X_IRTEST_WAS_CACHED"],
+            ]
+            # print(out)
+            fd.write(",".join([str(x) for x in out]) + "\n")
+        del os.environ["X_IRTEST_WAS_CACHED"]  # reset for next compilation

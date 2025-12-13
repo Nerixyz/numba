@@ -5,7 +5,11 @@ import weakref
 import ctypes
 import html
 import textwrap
+import xxhash
+import os
+from pathlib import Path
 
+import traceback
 import llvmlite.binding as ll
 import llvmlite.ir as llvmir
 
@@ -15,7 +19,7 @@ from numba.core.llvm_bindings import create_pass_builder
 from numba.core.runtime.nrtopt import remove_redundant_nrt_refct
 from numba.core.runtime import rtsys
 from numba.core.compiler_lock import require_global_compiler_lock
-from numba.core.errors import NumbaInvalidConfigWarning
+from numba.core.errors import NumbaInvalidConfigWarning, IrhashResult
 from numba.misc.inspection import disassemble_elf_to_cfg
 from numba.misc.llvm_pass_timings import PassTimingsCollection
 
@@ -533,6 +537,8 @@ class CodeLibrary(metaclass=ABCMeta):
         self._recorded_timings = PassTimingsCollection(ptc_name)
         # Track names of the dynamic globals
         self._dynamic_globals = []
+        self.dynamic_import_names = []
+        self.dynamic_import_values = []
 
     @property
     def has_dynamic_globals(self):
@@ -642,7 +648,8 @@ class CPUCodeLibrary(CodeLibrary):
 
     def __init__(self, codegen, name):
         super().__init__(codegen, name)
-        self._linking_libraries = []   # maintain insertion order
+        self._linking_libraries = []  # maintain insertion order
+        self.delayed_modules = []
         self._final_module = ll.parse_assembly(
             str(self._codegen._create_empty_module(self.name)))
         self._final_module.name = cgutils.normalize_ir_text(self.name)
@@ -728,22 +735,92 @@ class CPUCodeLibrary(CodeLibrary):
         self._linking_libraries.append(library)
 
     def add_ir_module(self, ir_module):
+        # print(self, "add_ir_module")
+        # traceback.print_stack()
+        # print(str(ir_module))
         self._raise_if_finalized()
         assert isinstance(ir_module, llvmir.Module)
         ir = cgutils.normalize_ir_text(str(ir_module))
         ll_module = ll.parse_assembly(ir)
         ll_module.name = ir_module.name
+        self.delayed_modules.append(ll_module)
         ll_module.verify()
-        self.add_llvm_module(ll_module)
+        # self.add_llvm_module(ll_module)
 
     def add_llvm_module(self, ll_module):
         self._optimize_functions(ll_module)
+        # print(ll_module)
         # TODO: we shouldn't need to recreate the LLVM module object
         if not config.LLVM_REFPRUNE_PASS:
             ll_module = remove_redundant_nrt_refct(ll_module)
         self._final_module.link_in(ll_module)
 
     def finalize(self):
+        # print("final", self, hasattr(self, "cache"))
+        # if hasattr(self, "cache") and self.cache is None:
+        #     print("panic")
+        # traceback.print_stack()
+        if hasattr(self, "irhash_cache"):  # for AOT stuff
+            # print("IRHASH")
+            # x = xxhash.xxh128()
+            # for ll_module in self.delayed_modules:
+            #     h = ll_module.irhash()
+            #     # print("=========================================")
+            #     # print(h)
+            #     # print(ll_module)
+            #     x.update(h)
+            # fin = x.digest().hex()
+            # cache_dir = os.environ["IRHASH_CACHE"]
+            # dst = Path(f"{cache_dir}/{fin[:2]}/{fin[2:]}.o")
+            # if dst.exists():
+            #     raise IrhashResult(dst)
+            # self._irhash_dst = dst
+            pass
+        elif (
+            hasattr(self, "cache")
+            and self.cache is not None
+            and os.environ["IRTEST_MODE"] == "irhash"
+        ):  # for JIT stuff
+            # print("FINAL", self)
+            x = xxhash.xxh128()
+            for ll_module in self.delayed_modules:
+                h = ll_module.irhash()
+                # print("=========================================")
+                # print(h)
+                # print(ll_module)
+                x.update(h)
+            # if hasattr(self, "req_sig"):
+            #     x.update(repr(self.req_sig))
+            # else:
+            x.update(repr(self._args))
+            x.update(repr(self._return_type))
+            fin = x.digest().hex()
+            data = self.cache.load_irhash(
+                fin,
+                self.targetctx,
+                self.dynamic_import_names,
+                self.dynamic_import_values,
+            )
+            self.hash = fin
+            if data is not None:
+                # print("LOAD", fin)
+                # print("WITH RESULT")
+                # traceback.print_stack()
+                # print(self.dynamic_import_names)
+                # print(self.dynamic_import_values)
+                raise IrhashResult(data)
+            # print("SAVE?", fin)
+            # for ll_module in self.delayed_modules:
+            #     # h = ll_module.irhash()
+            #     print("=========================================")
+            #     print(h)
+            #     print(ll_module)
+            # x.update(h)
+            # traceback.print_stack()
+        for ll_module in self.delayed_modules:
+            # print("=======================")
+            # print(ll_module)
+            self.add_llvm_module(ll_module)
         require_global_compiler_lock()
 
         # Report any LLVM-related problems to the user
@@ -764,12 +841,24 @@ class CPUCodeLibrary(CodeLibrary):
                     library._get_module_for_linking(), preserve=True,
                 )
 
-        # Optimize the module after all dependences are linked in above,
-        # to allow for inlining.
+        # is_final = hasattr(self, "irhash_cache")
+        # if is_final:
+        #     fin = self._final_module.irhash().hex()
+        #     cache_dir = os.environ["IRHASH_CACHE"]
+        #     # print(self._final_module)
+        #     dst = Path(f"{cache_dir}/{fin[:2]}/{fin[2:]}.o")
+        #     if dst.exists():
+        #         raise IrhashResult(dst)
+        #     self._irhash_dst = dst
+
+        #     # Optimize the module after all depend93825028146624ences are linked in above,
+        #     # to allow for inlining.
         self._optimize_final_module()
 
         self._final_module.verify()
         self._finalize_final_module()
+        # print("=======================")
+        # print(self._final_module)
 
     def _finalize_dynamic_globals(self):
         # Scan for dynamic globals
@@ -1109,6 +1198,8 @@ class JitEngine(object):
         """Override ExecutionEngine.add_global_mapping
         to keep info about defined symbols.
         """
+        # print("ADD GLOBAL MAPPING")
+
         self._defined_symbols.add(gv.name)
         return self._ee.add_global_mapping(gv, addr)
 
@@ -1169,13 +1260,14 @@ class CPUCodegen(Codegen):
 
     def __init__(self, module_name):
         initialize_llvm()
-
         self._data_layout = None
         self._llvm_module = ll.parse_assembly(
             str(self._create_empty_module(module_name)))
         self._llvm_module.name = "global_codegen_module"
         self._rtlinker = RuntimeLinker()
         self._init(self._llvm_module)
+        self.dyn_global_to_name = {}
+        self.n_dyn_globals = 0
 
     def _init(self, llvm_module):
         assert list(llvm_module.global_variables) == [], "Module isn't empty"
@@ -1408,9 +1500,19 @@ class JITCPUCodegen(CPUCodegen):
 
         Update the GlobalVariable named *env_name* to the address of *env*.
         """
+        # print("SET ENV", env_name, env)
         gvaddr = self._engine.get_global_value_address(env_name)
         envptr = (ctypes.c_void_p * 1).from_address(gvaddr)
         envptr[0] = ctypes.c_void_p(id(env))
+
+    def set_ptr(self, env_name, val):
+        """Set the environment address.
+
+        Update the GlobalVariable named *env_name* to the address of *env*.
+        """
+        gvaddr = self._engine.get_global_value_address(env_name)
+        envptr = (ctypes.c_void_p * 1).from_address(gvaddr)
+        envptr[0] = ctypes.c_void_p(val)
 
 
 def initialize_llvm():

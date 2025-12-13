@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 from numba.core import typing, sigutils
 from numba.core.compiler_lock import global_compiler_lock
@@ -214,14 +215,17 @@ class CC(object):
         """
         Compile the extension module.
         """
+        start = time.time_ns()
         self._toolchain.verbose = self.verbose
         build_dir = tempfile.mkdtemp(prefix='pycc-build-%s-' % self._basename)
 
         # Compile object file
         objects, dll_exports = self._compile_object_files(build_dir)
+        comp_objects = time.time_ns()
 
         # Compile mixins
         objects += self._compile_mixins(build_dir)
+        comp_mixins = time.time_ns()
 
         # Then create shared library
         extra_ldflags = self._get_extra_ldflags()
@@ -232,6 +236,16 @@ class CC(object):
                                     libraries, library_dirs,
                                     export_symbols=dll_exports,
                                     extra_ldflags=extra_ldflags)
+        link = time.time_ns()
+        total_s = (link - start) / (10**9)
+        link_s = (link - comp_mixins) / (10**9)
+        comp_mixin_s = (comp_mixins - comp_objects) / (10**9)
+        comp_objs_s = (comp_objects - start) / (10**9)
+
+        print("total:", total_s)
+        print("compile objects:", comp_objs_s)
+        print("compile mixins:", comp_mixin_s)
+        print("link:", link_s)
 
         shutil.rmtree(build_dir)
 
