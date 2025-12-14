@@ -59,7 +59,7 @@ def main():
     out_dir = os.environ.get("IRTEST_REDUCE_DIR", "x_irhash")
     df.to_csv(f"{out_dir}/irtest-combined.csv", index=False)
 
-    df = pd.concat(tests)
+    df = pd.concat(all_tests)
     df.to_csv(f"{out_dir}/irtest-tests.csv", index=False)
 
 

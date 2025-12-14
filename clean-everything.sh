@@ -1,6 +1,6 @@
 #!/bin/sh
 
-set -e;
+set -ex;
 
 IRHASH_CACHE="${IRHASH_CACHE:-/tmp/irhash}"
 IRTEST_OUT="${IRTEST_OUT:-/tmp/irtest}"
