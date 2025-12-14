@@ -27,5 +27,6 @@ htmlcov/
 __pycache__/
 !used-tests.txt
 !all-tests.txt
+!100-tests.txt
 
 docs/source/developer/autogen*
