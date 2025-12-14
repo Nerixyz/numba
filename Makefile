@@ -1,7 +1,7 @@
-# TESTS := $(shell cat all-tests.txt)
+TESTS := $(shell cat all-tests.txt)
 # TESTS := $(shell cat with-cache.txt)
 # TESTS := $(shell cat rand-tests.txt)
-TESTS := $(shell cat 100-tests.txt)
+# TESTS := $(shell cat 100-tests.txt)
 
 IRTEST_OUT ?= /tmp/irtest
 

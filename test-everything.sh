@@ -7,7 +7,8 @@ export IRTEST_OUT="${IRTEST_OUT:-/tmp/irtest}"
 
 ./clean-everything.sh
 
-myprocs="${IRTEST_MYPROCS:-8}"
+myprocs=$(nproc)
+myprocs=$((myprocs>12 ? myprocs - 4 : myprocs))
 
 export IRTEST_MODE=numba-nocache
 export IRTEST_PHASE=0

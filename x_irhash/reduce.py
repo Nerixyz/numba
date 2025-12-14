@@ -57,10 +57,15 @@ def main():
         frames += dir_frames
     df = pd.concat(frames)
     out_dir = os.environ.get("IRTEST_REDUCE_DIR", "x_irhash")
-    df.to_csv(f"{out_dir}/irtest-combined.csv", index=False)
+    combined_out = f"{out_dir}/irtest-combined.csv"
+    print(f"Write {combined_out}")
+    df.to_csv(combined_out, index=False)
 
     df = pd.concat(all_tests)
-    df.to_csv(f"{out_dir}/irtest-tests.csv", index=False)
+    test_out = f"{out_dir}/irtest-tests.csv"
+    print(f"Write {test_out}")
+
+    df.to_csv(test_out, index=False)
 
 
 if __name__ == "__main__":
