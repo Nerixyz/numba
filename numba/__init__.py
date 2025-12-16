@@ -149,6 +149,7 @@ def _ensure_llvm():
     """
     Make sure llvmlite is operational.
     """
+    return  # In Docker we build with "None" and that breaks this
     import warnings
     import llvmlite
 
