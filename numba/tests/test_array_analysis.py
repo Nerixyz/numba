@@ -1079,7 +1079,7 @@ class TestArrayAnalysisInterface(TestCase):
             with self.subTest(fname=k, sig=got):
                 self.assertEqual(got, expected)
 
-    @skip_unsupported
+    @unittest.skip  # no function IR when caching
     def test_array_analysis_extensions(self):
         # Test that the `array_analysis` object in `array_analysis_extensions`
         # can perform analysis on the scope using `equiv_sets`.

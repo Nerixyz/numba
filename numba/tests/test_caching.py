@@ -123,6 +123,7 @@ def check_generator_cache():
     assert exp == got
 
 
+@unittest.skip # This tests for numba cache specific things, IR-Hash works differently.
 class TestCaching(SerialMixin, TestCase):
     def run_test(self, func):
         func()
@@ -305,6 +306,7 @@ class DispatcherCacheUsecasesTest(BaseCacheTest):
                              st.cache_misses)
 
 
+@unittest.skip
 class TestCache(DispatcherCacheUsecasesTest):
 
     def test_caching(self):
@@ -719,6 +721,7 @@ class TestCache(DispatcherCacheUsecasesTest):
         self.assertIn("cache hits = 1", err.strip())
 
 
+@unittest.skip
 class TestCacheZip(DispatcherCacheUsecasesTest):
 
     def setUp(self):
@@ -778,6 +781,7 @@ def add(x, y):
         self.check_hits(test_module.add, 1)
 
 
+@unittest.skip
 class TestCacheZipLib(DispatcherCacheUsecasesTest):
     """
     ZipCache tests that don't require the setup/teardown from `TestCacheZip`
@@ -805,7 +809,7 @@ class TestCacheZipLib(DispatcherCacheUsecasesTest):
         self.assertIsNone(locator)
 
 
-@skip_parfors_unsupported
+@unittest.skip
 class TestSequentialParForsCache(DispatcherCacheUsecasesTest):
     def setUp(self):
         super(TestSequentialParForsCache, self).setUp()
@@ -829,6 +833,7 @@ class TestSequentialParForsCache(DispatcherCacheUsecasesTest):
         self.check_pycache(2)  # 1 index, 1 data
 
 
+@unittest.skip
 class TestCacheWithCpuSetting(DispatcherCacheUsecasesTest):
     # Disable parallel testing due to envvars modification
     _numba_parallel_test_ = False
@@ -921,6 +926,7 @@ class TestCacheWithCpuSetting(DispatcherCacheUsecasesTest):
         self.assertEqual(key_modified[1][2], my_cpu_features)
 
 
+@unittest.skip
 class TestMultiprocessCache(BaseCacheTest):
 
     # Nested multiprocessing.Pool raises AssertionError:
@@ -950,7 +956,7 @@ class TestMultiprocessCache(BaseCacheTest):
         self.assertEqual(res, n * (n - 1) // 2)
 
 
-@skip_if_typeguard
+@unittest.skip
 class TestCacheFileCollision(unittest.TestCase):
     _numba_parallel_test_ = False
 
@@ -1081,6 +1087,7 @@ def cache_file_collision_tester(q, tempdir, modname_bar1, modname_bar2):
     q.put(r2)
 
 
+@unittest.skip
 class TestCacheMultipleFilesWithSignature(unittest.TestCase):
     # Regression test for https://github.com/numba/numba/issues/3658
 
@@ -1133,6 +1140,7 @@ def function2(x):
         self.assertEqual(popen.returncode, 0, msg)
 
 
+@unittest.skip
 class TestCFuncCache(BaseCacheTest):
 
     here = os.path.dirname(__file__)

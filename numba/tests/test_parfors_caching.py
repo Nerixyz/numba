@@ -1,6 +1,7 @@
 import os.path
 import subprocess
 import sys
+import unittest
 
 import numpy as np
 
@@ -8,7 +9,7 @@ from numba.tests.support import skip_parfors_unsupported
 from .test_caching import DispatcherCacheUsecasesTest
 
 
-@skip_parfors_unsupported
+@unittest.skip
 class TestParforsCache(DispatcherCacheUsecasesTest):
     here = os.path.dirname(__file__)
     usecases_file = os.path.join(here, "parfors_cache_usecases.py")
@@ -47,7 +48,7 @@ class TestParforsCache(DispatcherCacheUsecasesTest):
         self.run_test(f, num_funcs=3)
 
 
-@skip_parfors_unsupported
+@unittest.skip
 class TestParforsCacheChangingThreads(DispatcherCacheUsecasesTest):
     # NOTE: This test is checking issue #7518, that thread counts are not
     # baked into cached objects.

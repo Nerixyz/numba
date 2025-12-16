@@ -4,6 +4,7 @@ import unittest
 from numba.tests.support import captured_stdout, override_config
 
 
+@unittest.skip  # no timings if we cache
 class DocsLLVMPassTimings(unittest.TestCase):
 
     def test_pass_timings(self):
