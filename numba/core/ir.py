@@ -242,7 +242,7 @@ class EqualityCheckMixin(object):
     def __eq__(self, other):
         if type(self) is type(other):
             def fixup(adict):
-                bad = ('loc', 'scope')
+                bad = ("loc", "scope", "_ir_id", "_ir_self")
                 d = dict(adict)
                 for x in bad:
                     d.pop(x, None)
@@ -377,12 +377,21 @@ class Expr(Inst):
     statement).
     """
 
+    # We use this ID to ensure there's a consistent
+    _next_id = 1
+
     def __init__(self, op, loc, **kws):
         assert isinstance(op, str)
         assert isinstance(loc, Loc)
         self.op = op
         self.loc = loc
+        self._assign_next_id()
         self._kws = kws
+
+    def _assign_next_id(self):
+        self._ir_id = Expr._next_id
+        self._ir_self = id(self)
+        Expr._next_id += 1
 
     def __getattr__(self, name):
         if name.startswith('_'):
@@ -390,10 +399,15 @@ class Expr(Inst):
         return self._kws[name]
 
     def __setattr__(self, name, value):
-        if name in ('op', 'loc', '_kws'):
+        if name in ("op", "loc", "_kws", "_ir_id", "_ir_self"):
             self.__dict__[name] = value
         else:
             self._kws[name] = value
+
+    def __hash__(self):
+        if self._ir_self != id(self):
+            self._assign_next_id()
+        return self._ir_id
 
     @classmethod
     def binop(cls, fn, lhs, rhs, loc):

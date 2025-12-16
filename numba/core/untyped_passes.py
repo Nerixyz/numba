@@ -255,11 +255,21 @@ class WithLifting(FunctionPass):
         )
         if withs:
             from numba.core.compiler import compile_ir, _EarlyPipelineCompletion
-            cres = compile_ir(state.typingctx, state.targetctx, main,
-                              state.args, state.return_type,
-                              state.flags, state.locals,
-                              lifted=tuple(withs), lifted_from=None,
-                              pipeline_class=type(state.pipeline))
+
+            cres = compile_ir(
+                state.typingctx,
+                state.targetctx,
+                main,
+                state.args,
+                state.return_type,
+                state.flags,
+                state.locals,
+                lifted=tuple(withs),
+                lifted_from=None,
+                pipeline_class=type(state.pipeline),
+                parent_state=state,
+                cache=state.cache,
+            )
             raise _EarlyPipelineCompletion(cres)
         return True
 

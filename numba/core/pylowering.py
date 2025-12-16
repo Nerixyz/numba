@@ -631,7 +631,7 @@ class PyLower(BaseLower):
         """
         Cleanup live variables.
         """
-        for name in self._live_vars:
+        for name in sorted(self._live_vars):
             ptr = self._getvar(name)
             self.decref(self.builder.load(ptr))
 

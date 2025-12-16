@@ -61,6 +61,14 @@ class _Cache(metaclass=ABCMeta):
         """
 
     @abstractmethod
+    def load_irhash(self, hash, target_context, dyn_import_names, dyn_import_values):
+        pass
+
+    @abstractmethod
+    def save_irhash(self, hash, data):
+        pass
+
+    @abstractmethod
     def enable(self):
         """
         Enable the cache.
@@ -87,8 +95,22 @@ class NullCache(_Cache):
     def load_overload(self, sig, target_context):
         pass
 
-    def save_overload(self, sig, cres):
+    def load_irhash(self, hash, target_context, dyn_import_names, dyn_import_values):
         pass
+
+    def save_irhash(self, hash, data):
+        pass
+
+    def save_overload(self, sig, data):
+        lib = data
+        if not isinstance(lib, CodeLibrary):
+            lib = lib.library
+        for name, val in zip(
+            lib.dynamic_import_names,
+            lib.dynamic_import_values,
+            strict=True,
+        ):
+            lib.codegen.set_ptr(name, val)
 
     def enable(self):
         pass
@@ -453,7 +475,7 @@ class CacheImpl(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def rebuild(self, target_context, reduced_data):
+    def rebuild(self, target_context, reduced_data, dyn_names, dyn_values):
         "Returns the de-serialized form of the *reduced_data*"
         pass
 
@@ -474,27 +496,25 @@ class CompileResultCacheImpl(CacheImpl):
         """
         return cres._reduce()
 
-    def rebuild(self, target_context, payload):
+    def rebuild(self, target_context, payload, dyn_global_names, dyn_global_values):
         """
         Returns the unserialized CompileResult
         """
-        return compiler.CompileResult._rebuild(target_context, *payload)
+        return compiler.CompileResult._rebuild(
+            target_context, *payload, dyn_global_names, dyn_global_values
+        )
 
     def check_cachable(self, cres):
         """
         Check cachability of the given compile result.
         """
         cannot_cache = None
-        if any(not x.can_cache for x in cres.lifted):
+        if any(x and not x.can_cache for x in cres.lifted):
             cannot_cache = "as it uses lifted code"
         elif cres.library.has_dynamic_globals:
             cannot_cache = ("as it uses dynamic globals "
                             "(such as ctypes pointers and large global arrays)")
         if cannot_cache:
-            msg = ('Cannot cache compiled function "%s" %s'
-                   % (cres.fndesc.qualname.split('.')[-1], cannot_cache))
-            warnings.warn_explicit(msg, NumbaWarning,
-                                   self._locator._py_file, self._lineno)
             return False
         return True
 
@@ -512,7 +532,7 @@ class CodeLibraryCacheImpl(CacheImpl):
         """
         return codelib.serialize_using_object_code()
 
-    def rebuild(self, target_context, payload):
+    def rebuild(self, target_context, payload, dyn_names, dyn_values):
         """
         Returns the unserialized CodeLibrary
         """
@@ -718,17 +738,27 @@ class Cache(_Cache):
         # Refresh the context to ensure it is initialized
         target_context.refresh()
         with self._guard_against_spurious_io_errors():
-            return self._load_overload(sig, target_context)
+            res = self._load_overload(sig, target_context)
+            if res is not None:
+                os.environ["X_IRTEST_WAS_CACHED"] = "1"
+            elif os.environ.get("X_IRTEST_WAS_CACHED", "NA") == "NA":
+                os.environ["X_IRTEST_WAS_CACHED"] = "0"
+            return res
         # None returned if the `with` block swallows an exception
 
     def _load_overload(self, sig, target_context):
-        if not self._enabled:
+        if not self._enabled or os.environ["IRTEST_MODE"] != "numba-cache":
             return
         key = self._index_key(sig, target_context.codegen())
         data = self._cache_file.load(key)
         if data is not None:
-            data = self._impl.rebuild(target_context, data)
+            data = self._impl.rebuild(target_context, data, [], [])
         return data
+
+    def load_irhash(
+        self, hash: str, target_context, dyn_global_names, dyn_global_values
+    ):
+        pass
 
     def save_overload(self, sig, data):
         """
@@ -738,7 +768,7 @@ class Cache(_Cache):
             self._save_overload(sig, data)
 
     def _save_overload(self, sig, data):
-        if not self._enabled:
+        if not self._enabled or os.environ["IRTEST_MODE"] != "numba-cache":
             return
         if not self._impl.check_cachable(data):
             return
@@ -746,6 +776,9 @@ class Cache(_Cache):
         key = self._index_key(sig, data.codegen)
         data = self._impl.reduce(data)
         self._cache_file.save(key, data)
+
+    def save_irhash(self, hash, data):
+        pass
 
     @contextlib.contextmanager
     def _guard_against_spurious_io_errors(self):
@@ -787,6 +820,138 @@ class FunctionCache(Cache):
     Implements Cache that saves and loads CompileResult objects.
     """
     _impl_class = CompileResultCacheImpl
+
+
+class IrhashCache(_Cache):
+    @property
+    def cache_path(self):
+        return None
+
+    def __init__(self):
+        super().__init__()
+        self.enable()
+
+    def load_overload(self, sig, target_context):
+        return None
+
+    def load_irhash(
+        self, hash: str, target_context, dyn_global_names, dyn_global_values
+    ):
+        if not self._enabled or os.environ["IRTEST_MODE"] != "irhash":
+            return
+        # print(f"Load IRHash: {hash}")
+        data = self._load_irhash_data(hash)
+        if data is not None:
+            # print("LOAD IRHASH", data[3])
+            data = self._rebuild(
+                target_context, data, dyn_global_names, dyn_global_values
+            )
+            if data is not None:
+                os.environ["X_IRTEST_WAS_CACHED"] = "1"
+                return data
+        if os.environ.get("X_IRTEST_WAS_CACHED", "NA"):
+            os.environ["X_IRTEST_WAS_CACHED"] = "0"
+        return None
+
+    def save_overload(self, sig, data):
+        """
+        Save the data for the given signature in the cache.
+        """
+        lib = data
+        if not isinstance(lib, CodeLibrary):
+            lib = lib.library
+        for name, val in zip(
+            lib.dynamic_import_names,
+            lib.dynamic_import_values,
+            strict=True,
+        ):
+            lib.codegen.set_ptr(name, val)
+
+    def save_irhash(self, hash, data: CompileResult):
+        if not self._enabled or os.environ["IRTEST_MODE"] != "irhash":
+            return
+        if not self._check_cachable(data):
+            return
+        data = data._reduce()
+        self._save_irhash_data(hash, data)
+
+    def _rebuild(self, target_context, payload, dyn_global_names, dyn_global_values):
+        """
+        Returns the unserialized CompileResult
+        """
+        return compiler.CompileResult._rebuild(
+            target_context, *payload, dyn_global_names, dyn_global_values
+        )
+
+    def _check_cachable(self, cres: CompileResult):
+        """
+        Check cachability of the given compile result.
+        """
+        cannot_cache = None
+        if any(x and not x.can_cache for x in cres.lifted):
+            cannot_cache = "as it uses lifted code"
+        elif cres.library.has_dynamic_globals:
+            cannot_cache = (
+                "as it uses dynamic globals "
+                "(such as ctypes pointers and large global arrays)"
+            )
+        if cannot_cache:
+            return False
+        return True
+
+    def _load_irhash_data(self, name: str):
+        try:
+            cache_dir = os.environ["IRHASH_CACHE"]
+            path = f"{cache_dir}/{name[:2]}/{name[2:]}"
+            with open(path, "rb") as f:
+                data = f.read()
+            try:
+                tup = pickle.loads(data)
+            except AttributeError:
+                return None
+            _cache_log("[cache] data loaded from %r", path)
+            return tup
+        except OSError:  # file not found
+            return None
+
+    def _save_irhash_data(self, name: str, data: str):
+        cache_dir = os.environ["IRHASH_CACHE"]
+        path = Path(f"{cache_dir}/{name[:2]}/{name[2:]}")
+        os.makedirs(path.parent, exist_ok=True)
+        data = dumps(data)
+        with self._open_for_write(path) as f:
+            f.write(data)
+        _cache_log("[cache] data saved to %r", path)
+
+    # Same as in IndexDataCacheFile
+    @contextlib.contextmanager
+    def _open_for_write(self, filepath):
+        """
+        Open *filepath* for writing in a race condition-free way (hopefully).
+        uuid4 is used to try and avoid name collisions on a shared filesystem.
+        """
+        uid = uuid.uuid4().hex[:16]  # avoid long paths
+        tmpname = "%s.tmp.%s" % (filepath, uid)
+        try:
+            with open(tmpname, "wb") as f:
+                yield f
+            os.replace(tmpname, filepath)
+        except Exception:
+            # In case of error, remove dangling tmp file
+            try:
+                os.unlink(tmpname)
+            except OSError:
+                pass
+            raise
+
+    def enable(self):
+        self._enabled = True
+
+    def disable(self):
+        self._enabled = False
+
+    def flush(self):
+        pass
 
 
 # Remember used cache filename prefixes.

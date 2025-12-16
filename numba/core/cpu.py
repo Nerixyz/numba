@@ -213,7 +213,10 @@ class CPUContext(BaseContext):
             pyapi = self.get_python_api(builder)
             gil_state = pyapi.gil_ensure()
             self.call_conv.raise_error(builder, pyapi, status)
-            cstr = self.insert_const_string(builder.module, repr(self))
+            # avoid including the address
+            cstr = self.insert_const_string(
+                builder.module, "<numba.core.cpu.CPUContext>"
+            )
             strobj = pyapi.string_from_string(cstr)
             pyapi.err_write_unraisable(strobj)
             pyapi.decref(strobj)

@@ -4,9 +4,11 @@ import sys
 from itertools import permutations, takewhile
 from contextlib import contextmanager
 from functools import cached_property
+import os
 
 from llvmlite import ir as llvmir
-from llvmlite.ir import Constant
+from llvmlite.ir import Constant, Module
+from llvmlite.ir.builder import IRBuilder
 import llvmlite.binding as ll
 
 from numba.core import types, utils, datamodel, debuginfo, funcdesc, config, cgutils, imputils
@@ -17,6 +19,7 @@ from numba.core.pythonapi import PythonAPI
 from numba.core.imputils import (user_function, user_generator,
                        builtin_registry, impl_ret_borrowed,
                        RegistryLoader)
+from numba.core.codegen import CodeLibrary
 from numba.cpython import builtins
 
 GENERIC_POINTER = llvmir.PointerType(llvmir.IntType(8))
@@ -1082,7 +1085,7 @@ class BaseContext(object):
 
         return cary._getvalue()
 
-    def add_dynamic_addr(self, builder, intaddr, info):
+    def add_dynamic_addr(self, builder: IRBuilder, intaddr, info):
         """
         Returns dynamic address as a void pointer `i8*`.
 
@@ -1091,17 +1094,43 @@ class BaseContext(object):
         """
         assert self.allow_dynamic_globals, "dyn globals disabled in this target"
         assert isinstance(intaddr, int), 'dyn addr not of int type'
-        mod = builder.module
-        llvoidptr = self.get_value_type(types.voidptr)
-        addr = self.get_constant(types.uintp, intaddr).inttoptr(llvoidptr)
-        # Use a unique name by embedding the address value
-        symname = 'numba.dynamic.globals.{:x}'.format(intaddr)
-        gv = cgutils.add_global_variable(mod, llvoidptr, symname)
-        # Use linkonce linkage to allow merging with other GV of the same name.
-        # And, avoid optimization from assuming its value.
-        gv.linkage = 'linkonce'
-        gv.initializer = addr
-        return builder.load(gv)
+        mod: Module = builder.module
+
+        # For IR-Hash and numba without caching, we add dynamic addresses
+        # through global variable set in the execution engine instead of
+        # directly embedding the address in the global. This allows us to avoid
+        #  cache misses. This isn't possible for numba's cache, because it
+        # wouldn't know which variables to restore. With IR-Hash, we always
+        # create the variables, because we check the cache after lowering to
+        # LLVM. If we have a cache hit, we know that the cache entry used the
+        # same global variables.
+        if os.environ["IRTEST_MODE"] != "numba-cache":
+            cg = self.codegen()
+            envname = cg.dyn_global_to_name.get(intaddr, None)
+            if envname is None:
+                envname = "numba-irhash-dyn-" + str(cg.n_dyn_globals)
+
+            cg.n_dyn_globals += 1
+            gv = mod.globals.get(envname, None)
+            if gv is None:
+                gv = llvmir.GlobalVariable(mod, cgutils.voidptr_t, name=envname)
+                gv.linkage = "common"
+                gv.initializer = cgutils.get_null_value(gv.type.pointee)
+                cg.dyn_global_to_name[intaddr] = envname
+                self.active_code_library.dynamic_import_names.append(envname)
+                self.active_code_library.dynamic_import_values.append(intaddr)
+            return builder.load(gv)
+        else:
+            llvoidptr = self.get_value_type(types.voidptr)
+            addr = self.get_constant(types.uintp, intaddr).inttoptr(llvoidptr)
+            # Use a unique name by embedding the address value
+            symname = "numba.dynamic.globals.{:x}".format(intaddr)
+            gv = cgutils.add_global_variable(mod, llvoidptr, symname)
+            # Use linkonce linkage to allow merging with other GV of the same name.
+            # And, avoid optimization from assuming its value.
+            gv.linkage = "linkonce"
+            gv.initializer = addr
+            return builder.load(gv)
 
     def get_abi_sizeof(self, ty):
         """
@@ -1138,7 +1167,7 @@ class BaseContext(object):
         raise NotImplementedError
 
     @property
-    def active_code_library(self):
+    def active_code_library(self) -> CodeLibrary:
         """Get the active code library
         """
         return self._codelib_stack[-1]

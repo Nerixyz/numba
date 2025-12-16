@@ -308,6 +308,9 @@ class IterableType(Type):
     Base class for iterable types.
     """
 
+    def __init__(self, name):
+        super().__init__(name)
+
     @property
     @abstractmethod
     def iterator_type(self):

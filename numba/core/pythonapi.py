@@ -1385,13 +1385,16 @@ class PythonAPI(object):
         """
         # First make the array constant
         data = serialize.dumps(obj)
+        hash = hashlib.sha1(data).digest()
+        hashed = cgutils.make_bytearray(hash)
         assert len(data) < 2**31
-        name = ".const.pickledata.%s" % (id(obj) if config.DIFF_IR == 0 else "DIFF_IR")
+        name = ".const.pickledata.%s" % (
+            hash.hex() if config.DIFF_IR == 0 else "DIFF_IR"
+        )
         bdata = cgutils.make_bytearray(data)
         # Make SHA1 hash on the pickled content
         # NOTE: update buffer size in numba_unpickle() when changing the
         #       hash algorithm.
-        hashed = cgutils.make_bytearray(hashlib.sha1(data).digest())
         arr = self.context.insert_unique_const(self.module, name, bdata)
         hasharr = self.context.insert_unique_const(
             self.module, f"{name}.sha1", hashed,
@@ -1404,7 +1407,7 @@ class PythonAPI(object):
             cgutils.get_null_value(self.voidptr),
             Constant(ir.IntType(32), 0),
             ])
-        return struct
+        return struct, hash
 
     def serialize_object(self, obj):
         """
@@ -1416,8 +1419,10 @@ class PythonAPI(object):
         try:
             gv = self.module.__serialized[obj]
         except KeyError:
-            struct = self.serialize_uncached(obj)
-            name = ".const.picklebuf.%s" % (id(obj) if config.DIFF_IR == 0 else "DIFF_IR")
+            struct, hash = self.serialize_uncached(obj)
+            name = ".const.picklebuf.%s" % (
+                hash.hex() if config.DIFF_IR == 0 else "DIFF_IR"
+            )
             gv = self.context.insert_unique_const(self.module, name, struct)
             # Make the id() (and hence the name) unique while populating the module.
             self.module.__serialized[obj] = gv

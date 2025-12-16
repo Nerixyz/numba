@@ -5,9 +5,10 @@ Implementation of compiled C callbacks (@cfunc).
 
 import ctypes
 from functools import cached_property
+import os
 
 from numba.core import compiler, registry
-from numba.core.caching import NullCache, FunctionCache
+from numba.core.caching import NullCache, FunctionCache, IrhashCache
 from numba.core.dispatcher import _FunctionCompiler
 from numba.core.typing import signature
 from numba.core.typing.ctypes_utils import to_ctypes
@@ -57,7 +58,10 @@ class CFunc(object):
         self._cache_hits = 0
 
     def enable_caching(self):
-        self._cache = FunctionCache(self._pyfunc)
+        if os.environ["IRTEST_MODE"] == "irhash":
+            self._cache = IrhashCache()
+        else:
+            self._cache = FunctionCache(self._pyfunc)
 
     @global_compiler_lock
     def compile(self):

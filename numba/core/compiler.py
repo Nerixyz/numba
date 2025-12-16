@@ -1,6 +1,7 @@
 from collections import namedtuple
 import copy
 import warnings
+import pickle
 from numba.core.tracing import event
 
 from numba.core import (errors, interpreter, bytecode, postproc, config,
@@ -198,6 +199,12 @@ class CompileResult(namedtuple("_CompileResult", CR_FIELDS)):
         Reduce a CompileResult to picklable components.
         """
         libdata = self.library.serialize_using_object_code()
+        for name, val in zip(
+            self.library.dynamic_import_names,
+            self.library.dynamic_import_values,
+            strict=True,
+        ):
+            self.library.codegen.set_ptr(name, val)
         # Make it (un)picklable efficiently
         typeann = str(self.type_annotation)
         fndesc = self.fndesc
@@ -225,9 +232,21 @@ class CompileResult(namedtuple("_CompileResult", CR_FIELDS)):
         return referenced_envs
 
     @classmethod
-    def _rebuild(cls, target_context, libdata, fndesc, env,
-                 signature, objectmode, lifted, typeann,
-                 reload_init, referenced_envs):
+    def _rebuild(
+        cls,
+        target_context,
+        libdata,
+        fndesc,
+        env,
+        signature,
+        objectmode,
+        lifted,
+        typeann,
+        reload_init,
+        referenced_envs,
+        dyn_global_names: list[str],
+        dyn_global_values: list[int],
+    ):
         if reload_init:
             # Re-run all
             for fn in reload_init:
@@ -255,6 +274,8 @@ class CompileResult(namedtuple("_CompileResult", CR_FIELDS)):
         # Load Environments
         for env in referenced_envs:
             library.codegen.set_env(env.env_name, env)
+        for name, val in zip(dyn_global_names, dyn_global_values, strict=True):
+            library.codegen.set_ptr(name, val)
 
         return cr
 
@@ -388,14 +409,26 @@ class CompilerBase(object):
     Stores and manages states for the compiler
     """
 
-    def __init__(self, typingctx, targetctx, library, args, return_type, flags,
-                 locals):
+    def __init__(
+        self,
+        typingctx,
+        targetctx,
+        library,
+        args,
+        return_type,
+        flags,
+        locals,
+        cache=None,
+        req_sig=None,
+    ):
         # Make sure the environment is reloaded
         config.reload_config()
         typingctx.refresh()
         targetctx.refresh()
 
         self.state = StateDict()
+        self.state.cache = cache
+        self.state.req_sig = req_sig
 
         self.state.typingctx = typingctx
         self.state.targetctx = _make_subtarget(targetctx, flags)
@@ -710,8 +743,19 @@ class DefaultPassBuilder(object):
         return pm
 
 
-def compile_extra(typingctx, targetctx, func, args, return_type, flags,
-                  locals, library=None, pipeline_class=Compiler):
+def compile_extra(
+    typingctx,
+    targetctx,
+    func,
+    args,
+    return_type,
+    flags,
+    locals,
+    library=None,
+    pipeline_class=Compiler,
+    cache=None,
+    req_sig=None,
+):
     """Compiler entry point
 
     Parameter
@@ -734,14 +778,51 @@ def compile_extra(typingctx, targetctx, func, args, return_type, flags,
     pipeline_class : type like numba.compiler.CompilerBase
         compiler pipeline
     """
-    pipeline = pipeline_class(typingctx, targetctx, library,
-                              args, return_type, flags, locals)
-    return pipeline.compile_extra(func)
+    pipeline = pipeline_class(
+        typingctx,
+        targetctx,
+        library,
+        args,
+        return_type,
+        flags,
+        locals,
+        cache=cache,
+        req_sig=req_sig,
+    )
+    res = pipeline.compile_extra(func)
+    h = None
+    if pipeline.state.library and hasattr(pipeline.state.library, "hash"):
+        h = pipeline.state.library.hash
+    elif (
+        hasattr(pipeline.state, "_irhash_res") and pipeline.state._irhash_res[0] == res
+    ):
+        h = pipeline.state._irhash_res[1]
+    if h is not None:
+        try:
+            pipeline.state.cache.save_irhash(h, res)
+        except pickle.PicklingError:
+            pass
+        except TypeError:
+            pass  # cannot pickle (we have to live with that)
+    return res
 
 
-def compile_ir(typingctx, targetctx, func_ir, args, return_type, flags,
-               locals, lifted=(), lifted_from=None, is_lifted_loop=False,
-               library=None, pipeline_class=Compiler):
+def compile_ir(
+    typingctx,
+    targetctx,
+    func_ir,
+    args,
+    return_type,
+    flags,
+    locals,
+    lifted=(),
+    lifted_from=None,
+    is_lifted_loop=False,
+    library=None,
+    parent_state=None,
+    pipeline_class=Compiler,
+    cache=None,
+):
     """
     Compile a function with the given IR.
 
@@ -768,37 +849,57 @@ def compile_ir(typingctx, targetctx, func_ir, args, return_type, flags,
         norw_flags.no_rewrites = True
 
         def compile_local(the_ir, the_flags):
-            pipeline = pipeline_class(typingctx, targetctx, library,
-                                      args, return_type, the_flags, locals)
-            return pipeline.compile_ir(func_ir=the_ir, lifted=lifted,
-                                       lifted_from=lifted_from)
+            pipeline = pipeline_class(
+                typingctx,
+                targetctx,
+                library,
+                args,
+                return_type,
+                the_flags,
+                locals,
+                cache=cache,
+            )
+            res = pipeline.compile_ir(
+                func_ir=the_ir, lifted=lifted, lifted_from=lifted_from
+            )
+            h = None
+            if pipeline.state.library and hasattr(pipeline.state.library, "hash"):
+                h = pipeline.state.library.hash
+            return res, h
 
         # compile with rewrites off, IR shouldn't be mutated irreparably
-        norw_cres = compile_local(func_ir.copy(), norw_flags)
+        norw_cres, norw_hash = compile_local(func_ir.copy(), norw_flags)
 
         # try and compile with rewrites on if no_rewrites was not set in the
         # original flags, IR might get broken but we've got a CompileResult
         # that's usable from above.
         rw_cres = None
+        rw_hash = None
         if not flags.no_rewrites:
             # Suppress warnings in compilation retry
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", errors.NumbaWarning)
                 try:
-                    rw_cres = compile_local(func_ir.copy(), flags)
+                    rw_cres, rw_hash = compile_local(func_ir.copy(), flags)
                 except Exception:
                     pass
         # if the rewrite variant of compilation worked, use it, else use
         # the norewrites backup
+        h = None
         if rw_cres is not None:
             cres = rw_cres
+            h = rw_hash
         else:
             cres = norw_cres
+            h = norw_hash
+        if parent_state is not None:
+            parent_state._irhash_res = (cres, h)  # make sure to capture the result too
         return cres
 
     else:
-        pipeline = pipeline_class(typingctx, targetctx, library,
-                                  args, return_type, flags, locals)
+        pipeline = pipeline_class(
+            typingctx, targetctx, library, args, return_type, flags, locals, cache=cache
+        )
         return pipeline.compile_ir(func_ir=func_ir, lifted=lifted,
                                    lifted_from=lifted_from)
 
