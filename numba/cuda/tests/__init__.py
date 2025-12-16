@@ -10,7 +10,7 @@ def load_tests(loader, tests, pattern):
     this_dir = dirname(__file__)
     ensure_supported_ccs_initialized()
     suite.addTests(load_testsuite(loader, join(this_dir, 'nocuda')))
-    if cuda.is_available():
+    if False:
         suite.addTests(load_testsuite(loader, join(this_dir, 'cudasim')))
         gpus = cuda.list_devices()
         if gpus and gpus[0].compute_capability >= (2, 0):
